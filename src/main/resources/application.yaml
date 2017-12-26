@@ -1,0 +1,5 @@
+spring:
+  application:
+    name: user-security-v1
+server:
+  port: 7005
