@@ -1,7 +1,7 @@
 # Spring Security练习
 ## 入门级Demo
 ### [参考来源](https://www.cnkirito.moe/categories/Spring-Security/)
-maven依赖
+### maven依赖
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
@@ -113,7 +113,8 @@ spring:
 server:
   port: 7005
 ```
-前端页面： 在src/main/resources/template/分别创建 home.html,login.html和welcome.html
+### 前端页面
+在src/main/resources/template/分别创建 home.html,login.html和welcome.html
 
 home.html
 ```html
@@ -150,6 +151,7 @@ login.html
 </body>
 </html>
 ```
+welcome.html
 ```html
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:th="http://www.thymeleaf.org">
@@ -302,3 +304,92 @@ public class AccessTest {
 }
 
 ```
+### 说明
+- 这一部分内容参照[徐靖峰](https://www.cnkirito.moe/2017/09/20/spring-security-2/)给的例子;主要是在其基础上,使用MockMVC添加了测试用例;
+- 如果把Spring Security 升级到5.0.0.RELEASE, 那么配置用户名和密码的方式需要改变，否则将报 将 ”Spring-Security升级到5.0.0.RELEASE版本后;采用内存授权模式添加用户;避免 There is no PasswordEncoder mapped for the id null“; 解决方式可以参考[官方例子](https://docs.spring.io/spring-security/site/docs/current/reference/htmlsingle/#jc-authentication-inmemory)
+
+## 角色继承关系的简单实现
+管理员用户应当拥有普通用户的权限,通过重写GlobalMethodSecurityConfiguration的accessDecisionManager方法来实现
+### [参考来源](https://segmentfault.com/a/1190000012545851)
+在src/main/java/user/security/config下创建RoleConfig.java,将角色间的层次关系硬编码进去
+```java
+package user.security.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.access.AccessDecisionManager;
+import org.springframework.security.access.AccessDecisionVoter;
+import org.springframework.security.access.annotation.Jsr250Voter;
+import org.springframework.security.access.expression.method.ExpressionBasedPreInvocationAdvice;
+import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
+import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
+import org.springframework.security.access.prepost.PreInvocationAuthorizationAdviceVoter;
+import org.springframework.security.access.vote.AffirmativeBased;
+import org.springframework.security.access.vote.AuthenticatedVoter;
+import org.springframework.security.access.vote.RoleHierarchyVoter;
+import org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity;
+import org.springframework.security.config.annotation.method.configuration.GlobalMethodSecurityConfiguration;
+import org.springframework.security.web.access.intercept.FilterSecurityInterceptor;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+import java.util.ArrayList;
+import java.util.List;
+
+// 重写GlobalMethodSecurityConfiguration的accessDecisionManager方法，
+// 给decisionVoters添加roleHierarchyVoter;
+// 默认是使用RoleVoter，它不支持继承关系，这里替换为roleHierarchyVoter
+// @see {@link https://segmentfault.com/a/1190000012545851}
+
+@EnableGlobalMethodSecurity(
+        securedEnabled = true,
+        jsr250Enabled = true,
+        prePostEnabled = true
+)
+@Configuration
+public class RoleConfig extends GlobalMethodSecurityConfiguration {
+    UsernamePasswordAuthenticationFilter usernamePasswordAuthenticationFilter;
+    FilterSecurityInterceptor filterSecurityInterceptor;
+    @Override
+    protected AccessDecisionManager accessDecisionManager() {
+        List<AccessDecisionVoter<? extends Object>> decisionVoters
+                = new ArrayList<AccessDecisionVoter<? extends Object>>();
+        ExpressionBasedPreInvocationAdvice expressionAdvice = new ExpressionBasedPreInvocationAdvice();
+        expressionAdvice.setExpressionHandler(getExpressionHandler());
+        decisionVoters
+                .add(new PreInvocationAuthorizationAdviceVoter(expressionAdvice));
+        decisionVoters.add(new Jsr250Voter());
+        decisionVoters.add(roleHierarchyVoter());
+        decisionVoters.add(new AuthenticatedVoter());
+        return new AffirmativeBased(decisionVoters);
+    }
+
+    @Bean
+    // 角色间的继承关系在授权阶段才会用上
+    // 而不是在认证阶段
+    public RoleHierarchyVoter roleHierarchyVoter() {
+        return new RoleHierarchyVoter(roleHierarchy());
+    }
+
+    @Bean
+    public RoleHierarchy roleHierarchy(){
+        RoleHierarchyImpl roleHierarchy = new RoleHierarchyImpl();
+        roleHierarchy.setHierarchy(
+                "ROLE_ADMIN > ROLE_USER\n"+
+                        " ROLE_USER > ROLE_ANONYMOUS\n"
+        );
+        return roleHierarchy;
+    }
+}
+```
+### 注意: 角色继承关系测试 
+RoleHierarchyVoter起作用是在授权阶段，而不是在认证阶段; 即若以admin/password通过认证后，其anthorities中只有ROLE_ADMIN,而不会有继承而来ROLE_USER;
+故而,测试代码只能写成这样;
+```java_holder_method_tree
+@Test
+public void adminRoles() throws  Exception {
+    mockMvc
+            .perform(formLogin().user("admin").password("password"))
+            .andExpect(authenticated().withRoles("ADMIN"));
+}
+```
+如果要在此处就能测试角色继承关系，可以在创建内存用户时直接硬编码进去; 或者,不使用RoleHierarchyVoter,而在CustomUserDetails这种认证阶段上去做手脚
