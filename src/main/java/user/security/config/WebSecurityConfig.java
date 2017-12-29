@@ -6,11 +6,17 @@ import org.springframework.security.config.annotation.authentication.builders.Au
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
+import user.security.custom.LoginSuccessHandler;
+
+import javax.annotation.Resource;
 
 
 @Configuration
 @EnableWebSecurity
 public class WebSecurityConfig extends WebSecurityConfigurerAdapter{
+
+    @Resource
+    private LoginSuccessHandler loginSuccessHandler;
 
     // 定义了哪些URL路径应该被拦截
     @Override
@@ -24,10 +30,15 @@ public class WebSecurityConfig extends WebSecurityConfigurerAdapter{
                // ”/login”作为登录入口，也被允许访问
                .formLogin()
                     .loginPage("/login").permitAll()
+                     .successHandler(loginSuccessHandler)
                     .and()
                .logout()
                     .permitAll()
                     .and()
+               // 先禁止,否则commons-httpclient无法在POST方法中传递参数
+               // 使用@RestController的post方法也无法使用@RequestBody注解
+               .csrf()
+                    .disable()
                // 禁止HTTP Basic认证方式
                 .httpBasic().disable();
 

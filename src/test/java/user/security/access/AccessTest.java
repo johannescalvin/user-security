@@ -13,6 +13,10 @@ import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 import org.springframework.test.context.web.WebAppConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.result.MockMvcResultHandlers;
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+import org.springframework.test.web.servlet.result.*;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
@@ -83,6 +87,22 @@ public class AccessTest {
         mockMvc
                 .perform(formLogin().user("admin").password("password"))
                 .andExpect(authenticated().withRoles("ADMIN"));
+    }
+
+
+
+    // 未登录情况下访问了受限资源之后 使用admin帐号登录
+    @Test
+    public void loginWithAdmin() throws Exception {
+        mockMvc.perform(get("/welcome"))
+                .andExpect(MockMvcResultMatchers.status().is(302));
+
+        mockMvc.perform(formLogin().user("admin").password("password"))
+                .andExpect(MockMvcResultMatchers.status().is(302))
+                .andExpect(MockMvcResultMatchers.redirectedUrl("/welcome"))
+                .andDo(MockMvcResultHandlers.print())
+                .andReturn();
+
     }
 
 }

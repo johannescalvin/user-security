@@ -393,3 +393,251 @@ public void adminRoles() throws  Exception {
 }
 ```
 如果要在此处就能测试角色继承关系，可以在创建内存用户时直接硬编码进去; 或者,不使用RoleHierarchyVoter,而在CustomUserDetails这种认证阶段上去做手脚
+
+也可以使用commons-httpclient来模拟请求，从而完成测试。在src/test/java/user/security/access/下创建RoleHierarchyTest.java
+```java
+package user.security.access;
+
+import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.NameValuePair;
+import org.apache.commons.httpclient.methods.GetMethod;
+import org.apache.commons.httpclient.methods.PostMethod;
+import org.junit.Before;
+import org.junit.Test;
+
+import static org.junit.Assert.assertEquals;
+
+public class RoleHierarchyTest {
+    private String loginUrl;
+    private String adminPage;
+    private String userPage;
+    @Before
+    public void setup(){
+
+        // 登陆 Url
+        loginUrl = "http://localhost:7005/login";
+        // 管理员页面
+        adminPage = "http://localhost:7005/admin";
+        // 普通用户页面
+    }
+    // 管理员既可以访问管理员能访问的
+    // 也能访问普通用户能访问的
+    @Test
+    public void admin() throws Exception{
+        HttpClient httpClient = new HttpClient();
+        PostMethod postMethod = postMethod = new PostMethod(loginUrl);
+        // 设置登陆时要求的信息，用户名和密码
+        NameValuePair[] data = { new NameValuePair("username", "admin"),
+                new NameValuePair("password", "password") };
+        postMethod.setRequestBody(data);
+        int post_status = httpClient.executeMethod(postMethod);
+//        assertEquals(200,post_status);
+
+        GetMethod getMethod_admin = new GetMethod(adminPage);
+        int get_status_admin = httpClient.executeMethod(getMethod_admin);
+        assertEquals(200,get_status_admin);
+
+        GetMethod getMethod_user = new GetMethod(adminPage);
+        int get_status_user = httpClient.executeMethod(getMethod_user);
+        assertEquals(200,get_status_user);
+    }
+
+}
+```
+
+## 根据登录用户跳转到不同的登录页面
+网上找到的例子通过自定义实现AuthenticationSuccessHandler来满足根据用户角色跳转到不同登录页面的要求;但如此一来，使Spring Security失去了 SaveRequest相关功能，需要改进。
+
+在 src/main/java/user/security/custom/下创建 LoginSuccessHandler.java
+```java
+package user.security.custom;
+
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.authority.AuthorityUtils;
+
+import org.springframework.security.web.authentication.SimpleUrlAuthenticationSuccessHandler;
+import org.springframework.security.web.savedrequest.HttpSessionRequestCache;
+import org.springframework.security.web.savedrequest.RequestCache;
+import org.springframework.security.web.savedrequest.SavedRequest;
+import org.springframework.util.StringUtils;
+
+
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.util.Set;
+
+@Configuration
+// 登录成功之后的处理
+public class LoginSuccessHandler extends SimpleUrlAuthenticationSuccessHandler {
+
+    protected final Log logger = LogFactory.getLog(this.getClass());
+    private RequestCache requestCache = new HttpSessionRequestCache();
+
+    public LoginSuccessHandler() {
+    }
+
+    @Override
+    public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response,
+                                        Authentication authentication) throws IOException, ServletException {
+        SavedRequest savedRequest = requestCache.getRequest(request, response);
+        if (savedRequest == null) {
+
+            Set<String> roles = AuthorityUtils.authorityListToSet(authentication.getAuthorities());
+
+            String path = request.getContextPath() ;
+            String basePath = request.getScheme()+"://"+request.getServerName()+":"+request.getServerPort()+path+"/";
+            if (roles.contains("ROLE_ADMIN")){
+                this.logger.debug("Redirecting to default page for  " +"ROLE_ADMIN : "+ basePath+"admin");
+                response.sendRedirect(basePath+"admin");
+                return ;
+            }
+            if (roles.contains("ROLE_USER")){
+                this.logger.debug("Redirecting to default page for  " +"ROLE_USER : "+ basePath+"user");
+                response.sendRedirect(basePath+"user");
+                return;
+            }
+
+        } else {
+            String targetUrlParameter = this.getTargetUrlParameter();
+            if (!this.isAlwaysUseDefaultTargetUrl() && (targetUrlParameter == null || !StringUtils.hasText(request.getParameter(targetUrlParameter)))) {
+                this.clearAuthenticationAttributes(request);
+                String targetUrl = savedRequest.getRedirectUrl();
+                this.logger.debug("Redirecting to DefaultSavedRequest Url: " + targetUrl);
+                this.getRedirectStrategy().sendRedirect(request, response, targetUrl);
+            } else {
+                this.requestCache.removeRequest(request, response);
+                super.onAuthenticationSuccess(request, response, authentication);
+
+            }
+        }
+
+    }
+
+    public void setRequestCache(RequestCache requestCache) {
+        this.requestCache = requestCache;
+    }
+
+}
+```
+修改src/main/java/user/security/config/WebSecurityConfig.java中修改配置方法;指定登录成功的处理流程和禁止csrf保护
+```java_holder_method_tree
+ // 定义了哪些URL路径应该被拦截
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {
+       http
+               // “/“, “/home”允许所有人访问
+               .authorizeRequests()
+                    .antMatchers("/","/home").permitAll()
+                    .anyRequest().authenticated()
+                    .and()
+               // ”/login”作为登录入口，也被允许访问
+               .formLogin()
+                    .loginPage("/login").permitAll()
+                     .successHandler(loginSuccessHandler)
+                    .and()
+               .logout()
+                    .permitAll()
+                    .and()
+               // 先禁止,否则commons-httpclient无法在POST方法中传递参数
+               // 使用@RestController的post方法也无法使用@RequestBody注解
+               .csrf()
+                    .disable()
+               // 禁止HTTP Basic认证方式
+                .httpBasic().disable();
+    }
+```
+### 测试
+由于没搞懂MockMVC处理跳转测试，先使用commons-httpclient模拟请求。在src/test/java/user/security/access/下创建LoginSuccessHandler.java
+```java
+package user.security.access;
+
+import org.apache.commons.httpclient.Header;
+import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.HttpStatus;
+import org.apache.commons.httpclient.NameValuePair;
+import org.apache.commons.httpclient.methods.GetMethod;
+import org.apache.commons.httpclient.methods.PostMethod;
+import org.junit.Before;
+import org.junit.Test;
+
+import static org.junit.Assert.*;
+
+// 测试登录时页面跳转情况
+// 缺陷: 服务地址硬编码
+public class LoginSuccessHandlerTest {
+
+    private String loginUrl;
+    private String securedUrl;
+    private String unSecuredUrl;
+    private String adminPage;
+    @Before
+    public void setup(){
+
+        // 登陆 Url
+        loginUrl = "http://localhost:7005/login";
+        // 需要授权才能访问的URL
+        securedUrl = "http://localhost:7005/welcome";
+        // 不需要授权就可访问的URL
+        unSecuredUrl = "http://localhost:7005/home";
+        adminPage = "http://localhost:7005/admin";
+    }
+
+    // 先访问受保护页面，然后登录
+    // 认证成功并授权成功后,返回之前访问的受保护页面
+    @Test
+    public void redirectToSecuredPage() throws  Exception{
+        HttpClient httpClient = new HttpClient();
+        PostMethod postMethod = postMethod = new PostMethod(loginUrl);
+        // 设置登陆时要求的信息，用户名和密码
+        NameValuePair[] data = { new NameValuePair("username", "admin"),
+                new NameValuePair("password", "password") };
+        postMethod.setRequestBody(data);
+        GetMethod getMethod = new GetMethod(securedUrl);
+        httpClient.executeMethod(getMethod);
+        int post_status = httpClient.executeMethod(postMethod);
+        if (post_status == HttpStatus.SC_MOVED_TEMPORARILY){
+            //读取新的URL地址
+            Header header = postMethod.getResponseHeader("location");
+            if (header != null) {
+                String new_url = header.getValue();
+                assertEquals(securedUrl,new_url);
+            }
+        }
+
+    }
+
+    // 先访问非受保护页面 然后登录
+    // 认证成功后,跳转到管理员界面
+    @Test
+    public void redirectToAdminPage() throws  Exception{
+        HttpClient httpClient = new HttpClient();
+        PostMethod postMethod = postMethod = new PostMethod(loginUrl);
+        // 设置登陆时要求的信息，用户名和密码
+        NameValuePair[] data = { new NameValuePair("username", "admin"),
+                new NameValuePair("password", "password") };
+        postMethod.setRequestBody(data);
+        GetMethod getMethod = new GetMethod(unSecuredUrl); // 先访问非受保护页面
+        httpClient.executeMethod(getMethod);
+        int post_status = httpClient.executeMethod(postMethod);
+        if (post_status == HttpStatus.SC_MOVED_TEMPORARILY){
+            //读取新的URL地址
+            Header header = postMethod.getResponseHeader("location");
+            if (header != null) {
+                String new_url = header.getValue();
+
+                assertEquals(adminPage,new_url);    // 跳转到管理员界面
+            }
+        }
+
+    }
+}
+
+```
+#### 注意
+请求地址被硬编码.更改application.yaml文件好后记得同时更改本文件;
