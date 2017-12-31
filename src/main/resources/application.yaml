@@ -1,5 +1,13 @@
 spring:
   application:
     name: user-security-v1
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    generate-ddl: true
+    show-sql: true
+  datasource:
+    platform: h2
+    server:
 server:
   port: 7005

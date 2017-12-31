@@ -89,20 +89,4 @@ public class AccessTest {
                 .andExpect(authenticated().withRoles("ADMIN"));
     }
 
-
-
-    // 未登录情况下访问了受限资源之后 使用admin帐号登录
-    @Test
-    public void loginWithAdmin() throws Exception {
-        mockMvc.perform(get("/welcome"))
-                .andExpect(MockMvcResultMatchers.status().is(302));
-
-        mockMvc.perform(formLogin().user("admin").password("password"))
-                .andExpect(MockMvcResultMatchers.status().is(302))
-                .andExpect(MockMvcResultMatchers.redirectedUrl("/welcome"))
-                .andDo(MockMvcResultHandlers.print())
-                .andReturn();
-
-    }
-
 }

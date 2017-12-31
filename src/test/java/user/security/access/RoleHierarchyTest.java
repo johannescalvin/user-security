@@ -21,6 +21,7 @@ public class RoleHierarchyTest {
         // 管理员页面
         adminPage = "http://localhost:7005/admin";
         // 普通用户页面
+        userPage = "http://localhost:7005/user";
     }
     // 管理员既可以访问管理员能访问的
     // 也能访问普通用户能访问的
@@ -39,7 +40,7 @@ public class RoleHierarchyTest {
         int get_status_admin = httpClient.executeMethod(getMethod_admin);
         assertEquals(200,get_status_admin);
 
-        GetMethod getMethod_user = new GetMethod(adminPage);
+        GetMethod getMethod_user = new GetMethod(userPage);
         int get_status_user = httpClient.executeMethod(getMethod_user);
         assertEquals(200,get_status_user);
     }

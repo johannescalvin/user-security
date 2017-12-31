@@ -19,6 +19,7 @@ public class LoginSuccessHandlerTest {
     private String securedUrl;
     private String unSecuredUrl;
     private String adminPage;
+    private String userPage;
     @Before
     public void setup(){
 
@@ -29,6 +30,7 @@ public class LoginSuccessHandlerTest {
         // 不需要授权就可访问的URL
         unSecuredUrl = "http://localhost:7005/home";
         adminPage = "http://localhost:7005/admin";
+        userPage = "http://localhost:7005/user";
     }
 
     // 先访问受保护页面，然后登录
@@ -75,6 +77,32 @@ public class LoginSuccessHandlerTest {
                 String new_url = header.getValue();
 
                 assertEquals(adminPage,new_url);    // 跳转到管理员界面
+            }
+        }
+
+    }
+
+
+    // 先访问非受保护页面 然后登录
+    // 认证成功后,跳转到用户界面
+    @Test
+    public void redirectToUserPage() throws  Exception{
+        HttpClient httpClient = new HttpClient();
+        PostMethod postMethod = postMethod = new PostMethod(loginUrl);
+        // 设置登陆时要求的信息，用户名和密码
+        NameValuePair[] data = { new NameValuePair("username", "user"),
+                new NameValuePair("password", "password") };
+        postMethod.setRequestBody(data);
+        GetMethod getMethod = new GetMethod(unSecuredUrl); // 先访问非受保护页面
+        httpClient.executeMethod(getMethod);
+        int post_status = httpClient.executeMethod(postMethod);
+        if (post_status == HttpStatus.SC_MOVED_TEMPORARILY){
+            //读取新的URL地址
+            Header header = postMethod.getResponseHeader("location");
+            if (header != null) {
+                String new_url = header.getValue();
+
+                assertEquals(userPage,new_url);    // 跳转到管理员界面
             }
         }
 

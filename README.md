@@ -641,3 +641,620 @@ public class LoginSuccessHandlerTest {
 ```
 #### 注意
 请求地址被硬编码.更改application.yaml文件好后记得同时更改本文件;
+
+## 使用数据库存储存储用户/角色信息
+### 更新maven依赖
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-data-jpa</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>com.h2database</groupId>
+    <artifactId>h2</artifactId>
+</dependency>
+```
+### 更新application.yaml
+```yaml
+spring:
+  application:
+    name: user-security-v1
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    generate-ddl: true
+    show-sql: true
+  datasource:
+    platform: h2
+    server:
+server:
+  port: 7005
+```
+暂时使用的是内存数据库;程序运行结束将自动删除数据,适用于开发测试阶段;正式环境需要更改为持久化存储
+
+### 创建 POJO
+在src/main/java/user/security/domain/下创建SysUser.java和SysRole.java,并利用JPA的@ManyToMany自动创建和维护用户-角色表
+
+SysUser.java
+```java
+package user.security.domain;
+
+import java.util.Date;
+import java.util.HashSet;
+import java.util.Set;
+
+import javax.persistence.*;
+
+@Entity
+@Table(name = "sys_user")
+public class SysUser implements java.io.Serializable {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "user_id", unique = true, nullable = false)
+    private Long id;
+    @Column(name = "name", length = 120)
+    private String name; //用户名
+    @Column(name = "email", length = 50)
+    private String email;//用户邮箱
+    @Column(name = "password", length = 120)
+    private String password;//用户密码
+
+    @Temporal(TemporalType.DATE)
+    @Column(name = "created_time", length = 10)
+    private Date createdTime;//时间
+
+    // 将自动创建表 sys_user_role(用户角色表) 来维护SysUser和SysRole之间的多对多联系
+    // user_id 和 role_id 分别是 sys_user表 和 sys_role表 的主键
+    // CascadeType 定义了级联操作
+    // FetchType.EAGER：急加载，加载一个实体时，定义急加载的属性会立即从数据库中加载
+    // 在Spring Security授权操作都会用到用户的角色属性,故适用于 急加载
+    @ManyToMany(cascade = {CascadeType.MERGE,CascadeType.REFRESH},fetch = FetchType.EAGER)
+    @JoinTable(name = "sys_user_role",
+            joinColumns = {@JoinColumn(name = "user_id")},
+            inverseJoinColumns = {@JoinColumn(name = "role_id")})
+    private Set<SysRole> sysRoles = new HashSet<SysRole>(0);// 所对应的角色集合
+
+    public SysUser() {
+    }
+
+    public SysUser(String name, String email, String password, Date createdTime, Set<SysRole> sysRoles) {
+        this.name = name;
+        this.email = email;
+        this.password = password;
+        this.createdTime = createdTime;
+        this.sysRoles = sysRoles;
+    }
+
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    public String getName() {
+        return this.name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getEmail() {
+        return this.email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public String getPassword() {
+        return this.password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
+
+
+    public Date getCreatedTime() {
+        return createdTime;
+    }
+
+    public void setCreatedTime(Date createdTime) {
+        this.createdTime = createdTime;
+    }
+
+    public Set<SysRole> getSysRoles() {
+        return this.sysRoles;
+    }
+
+    public void setSysRoles(Set<SysRole> sysRoles) {
+        this.sysRoles = sysRoles;
+    }
+
+    @Override
+    public String toString() {
+        return "SysUser{" +
+                "id=" + id +
+                ", name='" + name + '\'' +
+                ", email='" + email + '\'' +
+                ", password='" + password + '\'' +
+                ", createdTime=" + createdTime +
+                ", SysRoles= [" +role2String()+ "]"+
+                '}';
+    }
+
+    private String role2String(){
+        if (sysRoles == null || sysRoles.isEmpty()){
+            return " ";
+        }
+        String info = "";
+        for (SysRole role : sysRoles){
+            info += role.getName()+",";
+        }
+        info = info.substring(0,info.length()-1);
+        return info;
+    }
+}
+```
+
+SysRole.java
+```java
+package user.security.domain;
+
+import org.hibernate.annotations.NotFound;
+import org.hibernate.annotations.NotFoundAction;
+
+import java.util.Date;
+import java.util.Set;
+
+import javax.persistence.*;
+
+//角色表
+@Entity
+@Table(name="sys_role")
+public class SysRole {
+	@Id
+	@GeneratedValue(strategy=GenerationType.IDENTITY)
+	@Column (name="role_id",length=10)
+	private Long id;
+
+	@Column(name="name",length=100)
+	private String name;//角色名称
+
+    @ManyToMany(fetch = FetchType.LAZY,mappedBy = "sysRoles")
+    @NotFound(action = NotFoundAction.IGNORE)
+    // Spring security中最常见的授权操作不会用到 角色下属哪些用户; 故而应该使用懒加载
+    // 该字段在调用时,需要特别注意: 某角色下的用户过多, 可能导致性能问题和异常; 调用时需谨慎鉴别
+    private Set<SysUser> sysUsers;
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+	public String getName() {
+		return name;
+	}
+	public void setName(String name) {
+		this.name = name;
+	}
+
+    public Set<SysUser> getSysUsers() {
+        return sysUsers;
+    }
+
+    public void setSysUsers(Set<SysUser> sysUsers) {
+        this.sysUsers = sysUsers;
+    }
+
+    @Override
+    public String toString() {
+        return "SysRole{" +
+                "id=" + id +
+                ", name='" + name + '\'' +
+                '}';
+    }
+}
+```
+### 利用JpaRepository接口实现 repository/DAO 层
+在src/main/java/user/security/repository/下创建 SysUserRepository.java 和 SysRoleRepository.java, 并实现自定义的查询方法
+
+SysUserRepository.java
+```java
+package user.security.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import user.security.domain.SysUser;
+
+public interface SysUserRepository extends JpaRepository<SysUser,Long> {
+    public SysUser findById(Long id);
+    public SysUser findByName(String name);
+    public SysUser findByEmail(String email);
+    public SysUser findByNameOrEmail(String name,String email);
+
+}
+```
+
+SysRoleRepository.java
+```java
+package user.security.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import user.security.domain.SysRole;
+
+public interface SysRoleRepository  extends JpaRepository<SysRole,Long> {
+    public SysRole findByName(String name);
+}
+```
+### 实现Service层
+在 src/main/java/user/security/service/下创建 SysUserService.java 和 SysRoleService.java 以屏蔽 repository层暴露的多余接口;并在service层实现业务逻辑
+
+SysUserService.java
+```java
+package user.security.service;
+
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.stereotype.Service;
+import user.security.domain.SysRole;
+import user.security.domain.SysUser;
+import user.security.repository.SysUserRepository;
+
+import javax.annotation.Resource;
+import javax.validation.constraints.NotNull;
+import java.util.Date;
+import java.util.HashSet;
+
+@Service
+public class SysUserService {
+    @Resource
+    private SysUserRepository sysUserRepository;
+    @Resource
+    private BCryptPasswordEncoder bCryptPasswordEncoder;
+    @Resource
+    private SysRoleService sysRoleService;
+
+    public SysUser create(@NotNull String username, @NotNull String password){
+       return create(username,password,null,sysRoleService.user());
+    }
+
+    public SysUser create(@NotNull String username,@NotNull String password,SysRole role){
+        if(role == null || role.getId() == null){
+            role = sysRoleService.user();
+        }
+        return create(username,password,null,role);
+    }
+
+    public SysUser create(@NotNull String username,@NotNull String password,String email,SysRole... roles){
+        SysUser exist = sysUserRepository.findByName(username);
+        if (exist != null){
+            return null;
+        }
+
+        if (email != null) {
+            exist = sysUserRepository.findByEmail(email);
+            if (exist != null){
+                return null;
+            }
+        }
+
+        SysUser user = new SysUser();
+        user.setName(username);
+        user.setPassword(bCryptPasswordEncoder.encode(password));
+        user.setEmail(email);
+        user.setCreatedTime(new Date());
+
+        // 默认注册为普通用户
+        HashSet<SysRole> roleSet = new HashSet<SysRole>();
+        if(roles == null){
+            roles = new SysRole[1];
+            roles[1] = sysRoleService.admin();
+        }
+
+        for (SysRole role : roles){
+            if(role == null || role.getId() == null){
+                continue;
+            }
+            roleSet.add(role);
+        }
+
+        user.setSysRoles(roleSet);
+
+        sysUserRepository.save(user);
+
+        return user;
+    }
+
+    public SysUser create(@NotNull String username,@NotNull String password, String email){
+        return create(username,password,email,sysRoleService.user());
+    }
+}
+
+```
+#### 注意: 默认创建的用户均为 普通用户 (ROLE_USER)
+
+SysRoleService.java
+```java
+package user.security.service;
+
+import org.springframework.stereotype.Service;
+import user.security.domain.SysRole;
+import user.security.repository.SysRoleRepository;
+
+import javax.annotation.PostConstruct;
+import javax.annotation.Resource;
+import javax.validation.constraints.NotNull;
+
+@Service
+public class SysRoleService {
+    @Resource
+    private SysRoleRepository sysRoleRepository;
+    private SysRole user_role;
+    private SysRole admin_role;
+
+    @PostConstruct
+    public void setup(){
+        user_role = sysRoleRepository.findByName("ROLE_USER");
+        admin_role = sysRoleRepository.findByName("ROLE_ADMIN");
+        
+        if (user_role == null){
+            user_role = new SysRole();
+            user_role.setName("ROLE_USER");
+
+            sysRoleRepository.save(user_role);
+        }
+
+        if (admin_role == null) {
+            admin_role = new SysRole();
+            admin_role.setName("ROLE_ADMIN");
+
+            sysRoleRepository.save(admin_role);
+        }
+    }
+
+    public SysRole create(@NotNull String roleName){
+        SysRole role = new SysRole();
+        role.setName(roleName);
+        sysRoleRepository.save(role);
+        if (role.getId() != null){
+            return role;
+        }
+        return null;
+    }
+
+    public SysRole user(){
+        return user_role;
+    }
+
+    public SysRole admin(){
+        return admin_role;
+    }
+}
+```
+#### 注意: 默认为应用创建两个角色 ROLE_ADMIN 和 ROLE_USER
+
+### 为应用创建默认用户
+为了保证之前写的测试用例仍能跑通,需要为应用创建两个默认账户 user/password/ROLE_USER 和 admin/password/ROLE_ADMIN
+
+DevProfieConfig.java
+```java
+package user.security;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
+import user.security.service.SysRoleService;
+import user.security.service.SysUserService;
+
+import javax.annotation.PostConstruct;
+import javax.annotation.Resource;
+
+@Configuration
+// @Profile(value = "dev")
+public class DevProfieConfig {
+    @Resource
+    private SysRoleService roleService;
+    @Resource
+    private SysUserService userService;
+    @PostConstruct
+    public void setup(){
+        // 默认创建具有ROLE_USER权限的用户
+        userService.create("user","password");
+        userService.create("admin","password",roleService.admin());
+    }
+}
+```
+### 修改配置类
+修改WebSecurityConfig.java
+```java_holder_method_tree
+@Autowired
+@Override
+protected void configure(AuthenticationManagerBuilder auth) throws Exception {
+    auth
+            .userDetailsService(customUserDetailsService)
+            .passwordEncoder(bCryptPasswordEncoder());
+}
+
+@Bean
+BCryptPasswordEncoder bCryptPasswordEncoder(){
+    return new BCryptPasswordEncoder();
+}
+```
+## 用户注册
+### 前端页面
+在 src/main/resources/templates/下创建register.html
+```html
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <title>SignUp Page</title>
+</head>
+<body>
+<form th:action="@{/signup}" method="post">
+    <div><label> User Name : <input type="text" name="username"/> </label></div>
+    <div><label> Password: <input type="password" name="password"/> </label></div>
+    <!--
+    <div><label> confirm password: <input type="password" name="confirm"/> </label></div>
+    -->
+    <div><input type="submit" value="Sign Up"/></div>
+</form>
+</body>
+</html>
+```
+### 控制器
+在src/main/java/user/security/web/controller/下创建控制器 UserSignupController.java
+```java
+package user.security.web.controller;
+
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.*;
+import user.security.domain.SysUser;
+import user.security.service.SysUserService;
+
+import javax.annotation.Resource;
+
+@Controller
+@RequestMapping("/signup")
+public class UserSignupController {
+    @Resource
+    private SysUserService userService;
+
+    @PostMapping
+    public String signupByUserName(
+            @RequestParam(value = "username", required = true) String username,
+            @RequestParam(value = "password", required = true) String password){
+
+        SysUser user = userService.create(username,password);
+
+        if(user == null){
+            return "error";
+        }
+        return "login"; // 由于创建用户之后可能涉及到根据用户角色进行跳转, 故而交给登录逻辑进行处理
+    }
+}
+```
+
+### 配置类
+修改 MvcConfig.java
+```java
+package user.security.config;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurerAdapter;
+
+@Configuration
+public class MvcConfig extends WebMvcConfigurerAdapter {
+    @Override
+    public void addViewControllers(ViewControllerRegistry registry) {
+        registry.addViewController("/home").setViewName("home");
+        registry.addViewController("/").setViewName("home");
+        registry.addViewController("/welcome").setViewName("welcome");
+        registry.addViewController("/login").setViewName("login");
+        registry.addViewController("/register").setViewName("register");
+        registry.addViewController("/error").setViewName("error");
+    }
+}
+```
+
+修改WebSecurityConfig.java,使 /register和/signup 无需授权即可访问; 并禁止 csrf保护，以使POST方法可以传递参数到后端
+```java_holder_method_tree
+// 定义了哪些URL路径应该被拦截
+@Override
+protected void configure(HttpSecurity http) throws Exception {
+   http
+           // “/“, “/home”允许所有人访问
+           .authorizeRequests()
+                .antMatchers("/","/home","/register","/signup").permitAll()
+                .anyRequest().authenticated()
+                .and()
+           // ”/login”作为登录入口，也被允许访问
+           .formLogin()
+                .loginPage("/login").permitAll()
+                 .successHandler(loginSuccessHandler)
+                .and()
+           .logout()
+                .permitAll()
+                .and()
+           // 先禁止,否则commons-httpclient无法在POST方法中传递参数
+           // 使用@RestController的post方法也无法使用@RequestBody注解
+           .csrf()
+                .disable()
+           // 禁止HTTP Basic认证方式
+            .httpBasic().disable();
+}
+```
+### 测试
+在src/test/java/user/security/access/下创建SignupControllerTest.java, 使用随机用户名注册一个账户，并登录，测试返回页面是否为/user
+```java
+package user.security.access;
+
+import org.apache.commons.httpclient.Header;
+import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.HttpStatus;
+import org.apache.commons.httpclient.NameValuePair;
+import org.apache.commons.httpclient.methods.PostMethod;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.util.Random;
+
+import static org.junit.Assert.assertEquals;
+
+public class SignupControllerTest {
+    private String signupUrl;
+    private String loginUrl;
+    private String adminPage;
+    private String userPage;
+
+    @Before
+    public void setup(){
+
+        // 登陆 Url
+        loginUrl = "http://localhost:7005/login";
+        // 管理员页面
+        adminPage = "http://localhost:7005/admin";
+        // 普通用户页面
+        userPage = "http://localhost:7005/user";
+        signupUrl =  "http://localhost:7005/signup";
+    }
+    @Test
+    public void registerThenLogin() throws  Exception{
+        HttpClient httpClient = new HttpClient();
+        PostMethod postMethod = new PostMethod(signupUrl);
+        // 设置登陆时要求的信息，用户名和密码
+        String username = "username_"+ new Random().nextInt();
+        NameValuePair[] data = { new NameValuePair("username", username),
+                new NameValuePair("password", "password") };
+        postMethod.setRequestBody(data);
+        int post_status = httpClient.executeMethod(postMethod);
+        assertEquals(200,post_status);
+
+        PostMethod loginMethod = new PostMethod(signupUrl);
+        // 设置登陆时要求的信息，用户名和密码
+        NameValuePair[] user_password = { new NameValuePair("username", username),
+                new NameValuePair("password", "password") };
+
+        loginMethod.setRequestBody(user_password);
+        int login_status = httpClient.executeMethod(loginMethod);
+        if (login_status == HttpStatus.SC_MOVED_TEMPORARILY){
+            //读取新的URL地址
+            Header header = loginMethod.getResponseHeader("location");
+            if (header != null) {
+                String new_url = header.getValue();
+
+                assertEquals(userPage,new_url);    // 跳转到管理员界面
+            }
+        }
+    }
+}
+
+```
