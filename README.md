@@ -1258,3 +1258,79 @@ public class SignupControllerTest {
 }
 
 ```
+
+## 使用邮箱登录
+修改src/main/java/user/security/custom/CustomUserDetailsService.java,使用name和Email两个字段进行查询,[查询结果必需唯一，否则将报NotUniqueResult异常]
+```java_holder_method_tree
+@Override
+public UserDetails loadUserByUsername(String userName) throws UsernameNotFoundException {
+
+    //SysUser对应数据库中的用户表，是最终存储用户和密码的表，可自定义
+    //本例使用SysUser中的name作为用户名:
+    SysUser user = sysUserRepository.findByNameOrEmail(userName,userName);
+    System.out.println("接收到的用户名 ： " + user);
+    if (user == null) {
+        throw new UsernameNotFoundException("UserName " + userName + " not found");
+    }
+    // SecurityUser实现UserDetails并将SysUser的name映射为username
+    SecurityUser seu = new SecurityUser(user);
+    return  seu;
+}
+```
+### 配置类
+在src/main/java/user/security/下修改DevProfileConfig.java,创建默认账号时添加邮箱字段
+```java_holder_method_tree
+@PostConstruct
+public void setup(){
+    // 默认创建具有ROLE_USER权限的用户
+    userService.create("user","password","user@exmaple.com");
+    userService.create("admin","password","admin@example.com",roleService.admin());
+}
+```
+### 测试
+```java
+package user.security.access;
+
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
+import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
+import org.springframework.test.context.web.WebAppConfiguration;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
+
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestBuilders.formLogin;
+import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.authenticated;
+
+@RunWith(SpringJUnit4ClassRunner.class)
+@WebAppConfiguration
+@ContextConfiguration
+@SpringBootTest
+public class LoginWithEmailTest {
+    @Autowired
+    private WebApplicationContext context;
+
+    private MockMvc mockMvc;
+    @Before
+    public void setup(){
+
+        mockMvc = MockMvcBuilders
+                .webAppContextSetup(context)
+                .apply(SecurityMockMvcConfigurers.springSecurity())
+                .build();
+    }
+    
+    @Test
+    public void loginWithEmail() throws Exception{
+        mockMvc
+                .perform(formLogin().user("admin@example.com").password("password"))
+                .andExpect(authenticated());
+    }
+}
+
+```

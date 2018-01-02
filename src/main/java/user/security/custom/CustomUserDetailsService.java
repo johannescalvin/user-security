@@ -26,7 +26,7 @@ public class CustomUserDetailsService implements UserDetailsService {
 
         //SysUser对应数据库中的用户表，是最终存储用户和密码的表，可自定义
         //本例使用SysUser中的name作为用户名:
-		SysUser user = sysUserRepository.findByName(userName);
+		SysUser user = sysUserRepository.findByNameOrEmail(userName,userName);
 		System.out.println("接收到的用户名 ： " + user);
 		if (user == null) {
 			throw new UsernameNotFoundException("UserName " + userName + " not found");

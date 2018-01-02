@@ -18,7 +18,7 @@ public class DevProfieConfig {
     @PostConstruct
     public void setup(){
         // 默认创建具有ROLE_USER权限的用户
-        userService.create("user","password");
-        userService.create("admin","password",roleService.admin());
+        userService.create("user","password","user@exmaple.com");
+        userService.create("admin","password","admin@example.com",roleService.admin());
     }
 }
