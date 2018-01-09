@@ -8,6 +8,5 @@ spring:
     show-sql: true
   datasource:
     platform: h2
-    server:
 server:
   port: 7005

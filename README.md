@@ -1334,3 +1334,216 @@ public class LoginWithEmailTest {
 }
 
 ```
+
+## 水平权限控制
+Spring Security的基于角色的授权模式，属于垂直权限控制;不能解决具有同一角色的用户相互访问彼此的私有数据;
+### 更新maven依赖
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-aop</artifactId>
+</dependency>
+```
+### 自定义注解
+在src/user/security/annotation/下创建AccessWithLoginUsername.java 和 HorizontalAuthority.java
+
+AccessWithLoginUsername.java
+```java
+package user.security.annotation;
+
+import java.lang.annotation.*;
+
+@Target(ElementType.PARAMETER) // 声明在形参列表中
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+public @interface AccessWithLoginUsername {
+    String msg() default "you should only access your own data.";
+}
+```
+
+HorizontalAuthority.java
+```java
+package user.security.annotation;
+
+import java.lang.annotation.*;
+
+// 水平权限检查注解
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+public @interface HorizontalAuthority {
+
+}
+```
+
+### 使用AOP检查被注解的参数
+在src/user/security/aop/创建HorizontalAuthorityInterceptor.java
+```java
+package user.security.aop;
+
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.*;
+
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+import org.springframework.util.ReflectionUtils;
+import user.security.annotation.AccessWithLoginUsername;
+
+
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Method;
+
+// 使用AOP检查被注解的参数
+@Component
+@Aspect
+public class HorizontalAuthorityInterceptor {
+    // 拦截 @HorizontalAuthority 修饰的方法
+    @Pointcut("@annotation(user.security.annotation.HorizontalAuthority)")
+    public void check(){
+
+    }
+
+    // @Before无法中止所拦截的方法的执行 故而使用@Around
+    @Around("check()")
+    public Object doBefore(ProceedingJoinPoint proceedingJoinPoint) throws Throwable  {
+        Object target = proceedingJoinPoint.getTarget();
+        Class<?> clazz = target.getClass();
+        //拦截的方法名
+		String methodName = proceedingJoinPoint.getSignature().getName();
+        //通过反射获取对象注解的方法
+		Method method = ReflectionUtils.findMethod(target.getClass(), methodName,String.class);
+		// 获取该方法上的参数
+        Object[] args = proceedingJoinPoint.getArgs();
+        //获取该方法在参数上的注解，每个参数可以有多个注解，得到的是一个二维数组
+		Annotation[][] parameterAnnotaions = method.getParameterAnnotations();
+		for (int i = 0; i < parameterAnnotaions.length; i++){
+		    // 单个参数上的注解
+            Annotation[] oneParameterAnnotaions = parameterAnnotaions[i];
+            for (int j = 0; j < oneParameterAnnotaions.length; j++){
+                // 只有本人能获取
+                if (oneParameterAnnotaions[j].annotationType() == AccessWithLoginUsername.class){
+                    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                    String name  = auth.getName(); // 当前登录用户
+                    String msg = ((AccessWithLoginUsername)oneParameterAnnotaions[j]).msg();
+                    if (!name.equals(args[i])){
+                        throw new Exception(msg);
+                    }
+                }
+            }
+        }
+
+        return proceedingJoinPoint.proceed(args);
+    }
+}
+
+```
+
+### 创建View Object,屏蔽敏感字段
+在src/user/security/vo/下创建SysRoleVO.java 和 SysUserVO
+
+SysRoleVO.java
+```java
+package user.security.vo;
+
+import user.security.domain.SysRole;
+
+import javax.validation.constraints.NotNull;
+
+public class SysRoleVO {
+    private String name;
+    public SysRoleVO(@NotNull SysRole role){
+        name = role.getName();
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+}
+```
+
+SysUserVO.java
+```java
+package user.security.vo;
+
+import user.security.domain.SysRole;
+import user.security.domain.SysUser;
+
+import javax.validation.constraints.NotNull;
+import java.util.HashSet;
+import java.util.Set;
+
+public class SysUserVO {
+    private String name;
+    private String email;
+    private Set<SysRoleVO> roles;
+    public SysUserVO(@NotNull SysUser user){
+        name = user.getName();
+        email = user.getEmail();
+        roles = new HashSet<SysRoleVO>();
+        Set<SysRole> roleSet = user.getSysRoles();
+        for(SysRole role : roleSet){
+            roles.add(new SysRoleVO(role));
+        }
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public Set<SysRoleVO> getRoles() {
+        return roles;
+    }
+
+    public void setRoles(Set<SysRoleVO> roles) {
+        this.roles = roles;
+    }
+}
+```
+
+### Controller
+在src/user/security/web/controller下创建 ProfileController.java;  联合 @HorizontalAuthority 和 @AccessWithLoginUsername 来进行水平权限控制; 只允许访问当前登录用户的资源
+```java
+package user.security.web.controller;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import user.security.annotation.AccessWithLoginUsername;
+import user.security.annotation.HorizontalAuthority;
+import user.security.domain.SysUser;
+import user.security.repository.SysUserRepository;
+import user.security.vo.SysUserVO;
+
+import javax.annotation.Resource;
+
+@RestController
+@RequestMapping("/profile")
+public class ProfileController {
+    @Resource
+    private SysUserRepository userRepository;
+
+    @GetMapping("/{username}")
+    @HorizontalAuthority
+    public SysUserVO get(@PathVariable @AccessWithLoginUsername String username){
+        return new SysUserVO(userRepository.findByName(username));
+    }
+}
+```
