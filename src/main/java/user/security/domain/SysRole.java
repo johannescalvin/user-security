@@ -1,5 +1,6 @@
 package user.security.domain;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.hibernate.annotations.NotFound;
 import org.hibernate.annotations.NotFoundAction;
 
@@ -24,6 +25,7 @@ public class SysRole {
     @NotFound(action = NotFoundAction.IGNORE)
     // Spring security中最常见的授权操作不会用到 角色下属哪些用户; 故而应该使用懒加载
     // 该字段在调用时,需要特别注意: 某角色下的用户过多, 可能导致性能问题和异常; 调用时需谨慎鉴别
+    @JsonIgnore // 避免JSON循环嵌套
     private Set<SysUser> sysUsers;
 
     public Long getId() {
